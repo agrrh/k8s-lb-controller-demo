@@ -1,46 +1,64 @@
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import json
+from fastapi import FastAPI
+
+from lib.external_api import ExternalAPI
+
+app = FastAPI()
+
+app.external_api = ExternalAPI()
+app.kube_client = None  # TODO
 
 
-class Controller(BaseHTTPRequestHandler):
-    def sync(self, parent):
-        # Compute status based on observed state.
-        desired_status = {"namespaces": len(children["Namespace.v1"])}
-
-        # Generate the desired child object(s).
-
-        license = parent.get("spec", {}).get("license", "WTFPL")
-
-        desired_namespaces = [
-            {
-                "apiVersion": "v1",
-                "kind": "Namespace",
-                "metadata": {
-                    "name": "-".join(("proj", parent["metadata"]["name"])),
-                    "annotations": {
-                        "description": parent["spec"]["description"],
-                        "license": parent["spec"]["license"],
-                    },
-                },
-            }
-        ]
-
-        return {"status": desired_status, "children": desired_namespaces}
-
-    def do_POST(self):
-        event = json.loads(self.rfile.read(int(self.headers.get("content-length"))))
-
-        # Create or update LB on "sync" request
-        if not event["finalizing"]:
-            response = self.sync(event["parent"])
-        # Delete LB on "finalize" request
-        else:
-            response = self.finalize(event["parent"])
-
-        self.send_response(200)
-        self.send_header("Content-type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps(response).encode())
+@app.get("/")
+def read_root():
+    return {"Hello": "World"}
 
 
-HTTPServer(("", 80), Controller).serve_forever()
+@app.post("/sync")
+def post_sync(event: dict) -> dict:
+    loadbalancer = event.get("parent", {})
+
+    response = {"desired_status": True, "actual_status": loadbalancer.spec.ready}
+
+    # Remote LB already exists, skipping
+    if loadbalancer.spec.ready:
+        return response
+
+    try:
+        lb_address = app.external_api.create_lb(
+            name=loadbalancer.metadata.name,
+            listen_port=loadbalancer.spec.port.port,
+            target_svc_selector=f"{loadbalancer.spec.service.name}.{loadbalancer.spec.service.namespace}.svc",
+            target_svc_port=loadbalancer.spec.service.port,
+        )
+    except Exception as e:
+        return {"message": "Could not create LoadBalancer via remote API", "error": e}
+
+    loadbalancer.spec.ready = bool(lb_address)
+    loadbalancer.spec.ready = lb_address
+
+    try:
+        app.kube_client.update_loadbalancer(new_spec=loadbalancer)
+    except Exception as e:
+        return {"message": "Could not update in-cluster LoadBalancer object", "error": e}
+
+    return response
+
+
+@app.post("/finalize")
+def post_finalize(event: dict) -> dict:
+    loadbalancer = event.get("parent", {})
+
+    response = {"desired_status": False, "actual_status": loadbalancer.spec.ready}
+
+    # No remote LB associated, nothing to cleanup
+    if not loadbalancer.spec.ready:
+        return response
+
+    try:
+        app.external_api.delete_lb(
+            name=loadbalancer.metadata.name,
+        )
+    except Exception as e:
+        return {"message": "Could not delete LoadBalancer via remote API", "error": e}
+
+    return response
