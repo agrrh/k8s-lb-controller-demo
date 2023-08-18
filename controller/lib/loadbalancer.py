@@ -17,15 +17,17 @@ class Service(object):
 
 
 @dataclass
-class LoadBalancer(KubeResourceBase):
+class Loadbalancer(KubeResourceBase):
     __group__ = "agrrh.com"
     __version__ = "v1alpha1"
 
     port: Port
     service: Service
+
+    # TODO: Move this to ".status"
     ready: bool = False
     address: str = ""
 
 
 if __name__ == "__main__":
-    print(LoadBalancer.crd_schema())
+    print(Loadbalancer.crd_schema())
