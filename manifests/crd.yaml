@@ -1,0 +1,53 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: loadbalancers.agrrh.com
+spec:
+  group: agrrh.com
+  names:
+    kind: LoadBalancer
+    plural: loadbalancers
+    singular: loadbalancer
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        properties:
+          spec:
+            $defs:
+              Port:
+                properties:
+                  name:
+                    type: string
+                  port:
+                    type: integer
+                required:
+                - name
+                - port
+                type: object
+            properties:
+              port:
+                $ref: '#/$defs/Port'
+              service:
+                properties:
+                  name:
+                    type: string
+                  namespace:
+                    type:
+                    - string
+                    - 'null'
+                  port:
+                    $ref: '#/$defs/Port'
+                required:
+                - name
+                - namespace
+                - port
+                type: object
+            required:
+            - port
+            - service
+            type: object
+        type: object
+    served: true
+    storage: true
